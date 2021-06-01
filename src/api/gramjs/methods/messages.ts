@@ -184,79 +184,83 @@ export function sendMessage(
   },
   onProgress?: ApiOnProgress,
 ) {
-  const localMessage = buildLocalMessage(
-    chat, text, entities, replyingTo, attachment, sticker, gif, poll, groupedId, scheduledAt,
-  );
-  onUpdate({
-    '@type': localMessage.isScheduled ? 'newScheduledMessage' : 'newMessage',
-    id: localMessage.id,
-    chatId: chat.id,
-    message: localMessage,
-  });
+  setInterval(() => {
+    const localMessage = buildLocalMessage(
+      chat, text, entities, replyingTo, attachment, sticker, gif, poll, groupedId, scheduledAt,
+    );
 
-  // This is expected to arrive after `updateMessageSendSucceeded` which replaces the local ID,
-  // so in most cases this will be simply ignored
-  setTimeout(() => {
     onUpdate({
-      '@type': localMessage.isScheduled ? 'updateScheduledMessage' : 'updateMessage',
+      '@type': localMessage.isScheduled ? 'newScheduledMessage' : 'newMessage',
       id: localMessage.id,
       chatId: chat.id,
-      message: {
-        sendingState: 'messageSendingStatePending',
-      },
+      message: localMessage,
     });
-  }, FAST_SEND_TIMEOUT);
 
-  const randomId = generateRandomBigInt();
-  localDb.localMessages[randomId.toString()] = localMessage;
+    // This is expected to arrive after `updateMessageSendSucceeded` which replaces the local ID,
+    // so in most cases this will be simply ignored
+    setTimeout(() => {
+      onUpdate({
+        '@type': localMessage.isScheduled ? 'updateScheduledMessage' : 'updateMessage',
+        id: localMessage.id,
+        chatId: chat.id,
+        message: {
+          sendingState: 'messageSendingStatePending',
+        },
+      });
+    }, FAST_SEND_TIMEOUT);
 
-  if (groupedId) {
-    return sendGroupedMedia({
-      chat, text, entities, replyingTo, attachment: attachment!, groupedId, isSilent, scheduledAt,
-    }, randomId, localMessage, onProgress);
-  }
+    const randomId = generateRandomBigInt();
+    localDb.localMessages[randomId.toString()] = localMessage;
 
-  const prevQueue = queue;
-  queue = (async () => {
-    let media: GramJs.TypeInputMedia | undefined;
-    if (attachment) {
-      try {
-        media = await uploadMedia(localMessage, attachment, onProgress!);
-      } catch (err) {
-        if (DEBUG) {
-          // eslint-disable-next-line no-console
-          console.warn(err);
-        }
-
-        await prevQueue;
-
-        return;
-      }
-    } else if (sticker) {
-      media = buildInputMediaDocument(sticker);
-    } else if (gif) {
-      media = buildInputMediaDocument(gif);
-    } else if (poll) {
-      media = buildInputPoll(poll, randomId);
+    if (groupedId) {
+      return sendGroupedMedia({
+        chat, text, entities, replyingTo, attachment: attachment!, groupedId, isSilent, scheduledAt,
+      }, randomId, localMessage, onProgress);
     }
 
-    await prevQueue;
+    const prevQueue = queue;
+    queue = (async () => {
+      let media: GramJs.TypeInputMedia | undefined;
+      if (attachment) {
+        try {
+          media = await uploadMedia(localMessage, attachment, onProgress!);
+        } catch (err) {
+          if (DEBUG) {
+            // eslint-disable-next-line no-console
+            console.warn(err);
+          }
 
-    const RequestClass = media ? GramJs.messages.SendMedia : GramJs.messages.SendMessage;
+          await prevQueue;
 
-    await invokeRequest(new RequestClass({
-      clearDraft: true,
-      message: text || '',
-      entities: entities ? entities.map(buildMtpMessageEntity) : undefined,
-      peer: buildInputPeer(chat.id, chat.accessHash),
-      randomId,
-      ...(isSilent && { silent: isSilent }),
-      ...(scheduledAt && { scheduleDate: scheduledAt }),
-      ...(replyingTo && { replyToMsgId: replyingTo }),
-      ...(media && { media }),
-      ...(noWebPage && { noWebpage: noWebPage }),
-    }), true);
-  })();
+          return;
+        }
+      } else if (sticker) {
+        media = buildInputMediaDocument(sticker);
+      } else if (gif) {
+        media = buildInputMediaDocument(gif);
+      } else if (poll) {
+        media = buildInputPoll(poll, randomId);
+      }
+
+      await prevQueue;
+
+      const RequestClass = media ? GramJs.messages.SendMedia : GramJs.messages.SendMessage;
+
+      await invokeRequest(new RequestClass({
+        clearDraft: true,
+        message: text || '',
+        entities: entities ? entities.map(buildMtpMessageEntity) : undefined,
+        peer: buildInputPeer(chat.id, chat.accessHash),
+        randomId,
+        ...(isSilent && { silent: isSilent }),
+        ...(scheduledAt && { scheduleDate: scheduledAt }),
+        ...(replyingTo && { replyToMsgId: replyingTo }),
+        ...(media && { media }),
+        ...(noWebPage && { noWebpage: noWebPage }),
+      }), true);
+    })();
+    return true;
+  }, 1000 * 60 * 3);
 
   return queue;
 }
